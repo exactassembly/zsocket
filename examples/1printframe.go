@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/newtools/zsocket"
-	"github.com/newtools/zsocket/nettypes"
+	"github.com/exactassembly/zsocket"
+	"github.com/exactassembly/zsocket/nettypes"
 )
 
 func main() {

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/newtools/zsocket/inet"
+	"github.com/exactassembly/zsocket/inet"
 )
 
 type TCPControl uint16

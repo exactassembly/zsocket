@@ -3,7 +3,7 @@ package nettypes
 import (
 	"fmt"
 
-	"github.com/newtools/zsocket/inet"
+	"github.com/exactassembly/zsocket/inet"
 )
 
 type UDP_P []byte

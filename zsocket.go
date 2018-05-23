@@ -131,6 +131,12 @@ type IZSocket interface {
 	Close() error
 }
 
+// IZFrame is an interface for interacting with the individual
+// capture/transmit frame buffers
+type IZFrame interface {
+	RxSet()
+}
+
 // ZSocket opens a zero copy ring-buffer to the specified interface.
 // Do not manually initialize ZSocket. Use `NewZSocket`.
 type ZSocket struct {
@@ -305,7 +311,39 @@ func (zs *ZSocket) Listen(fx func(*nettypes.Frame, uint16, uint16)) error {
 		for ; rf.rxReady(); rf = zs.rxFrames[rxIndex] {
 			f := nettypes.Frame(rf.raw[rf.macStart():])
 			fx(&f, rf.tpLen(), rf.tpSnapLen())
-			rf.rxSet()
+			rf.RxSet()
+			rxIndex = (rxIndex + 1) % zs.frameNum
+		}
+		_, _, e1 := syscall.Syscall(syscall.SYS_POLL, pfdP, uintptr(1), pTOPointer)
+		if e1 != 0 {
+			return e1
+		}
+	}
+}
+
+// Listen to all specified packets in the RX ring-buffer
+func (zs *ZSocket) ListenAsync(fx func(*nettypes.Frame, uint16, uint16, IZFrame)) error {
+	if !zs.rxEnabled {
+		return fmt.Errorf("the RX ring is disabled on this socket")
+	}
+	if !atomic.CompareAndSwapInt32(&zs.listening, 0, 1) {
+		return fmt.Errorf("there is already a listener on this socket")
+	}
+	pfd := &pollfd{}
+	pfd.fd = zs.socket
+	pfd.events = _POLLERR | _POLLIN
+	pfd.revents = 0
+	pfdP := uintptr(pfd.getPointer())
+	rxIndex := int32(0)
+	rf := zs.rxFrames[rxIndex]
+	pollTimeout := -1
+	pTOPointer := uintptr(unsafe.Pointer(&pollTimeout))
+	for {
+		for ; rf.rxReady(); rf = zs.rxFrames[rxIndex] {
+			f := nettypes.Frame(rf.raw[rf.macStart():])
+			fx(&f, rf.tpLen(), rf.tpSnapLen(), rf)
+			// we dont call rf.RxSet() now, consumer must do this!
+			//			rf.rxSet()
 			rxIndex = (rxIndex + 1) % zs.frameNum
 		}
 		_, _, e1 := syscall.Syscall(syscall.SYS_POLL, pfdP, uintptr(1), pTOPointer)
@@ -529,7 +567,8 @@ func (rf *ringFrame) rxReady() bool {
 	return inet.Long(rf.raw[0:inet.HOST_LONG_SIZE])&_TP_STATUS_USER == _TP_STATUS_USER && atomic.CompareAndSwapUint32(&rf.mb, 0, 1)
 }
 
-func (rf *ringFrame) rxSet() {
+// RxSet passes control of a frame back to the Kernel
+func (rf *ringFrame) RxSet() {
 	inet.PutLong(rf.raw[0:inet.HOST_LONG_SIZE], uint64(_TP_STATUS_KERNEL))
 	// this acts as a memory barrier
 	atomic.StoreUint32(&rf.mb, 0)
@@ -555,7 +594,7 @@ func (rf *ringFrame) txSetMB() {
 	atomic.StoreUint32(&rf.mb, 0)
 }
 
-func (rf *ringFrame) printRxStatus() {
+func (rf *ringFrame) PrintRxStatus() {
 	s := inet.Long(rf.raw[0:inet.HOST_LONG_SIZE])
 	fmt.Printf("RX STATUS :")
 	if s == 0 {
@@ -585,7 +624,7 @@ func (rf *ringFrame) printRxStatus() {
 	if _TP_STATUS_CSUM_VALID&s > 0 {
 		fmt.Printf(" CSUM-Valid")
 	}
-	rf.printRxTxStatus(s)
+	rf.PrintRxTxStatus(s)
 	fmt.Printf("\n")
 }
 
@@ -604,11 +643,11 @@ func (rf *ringFrame) printTxStatus() {
 	if s&_TP_STATUS_WRONG_FORMAT > 0 {
 		fmt.Printf(" WrongFormat")
 	}
-	rf.printRxTxStatus(s)
+	rf.PrintRxTxStatus(s)
 	fmt.Printf("\n")
 }
 
-func (rf *ringFrame) printRxTxStatus(s uint64) {
+func (rf *ringFrame) PrintRxTxStatus(s uint64) {
 	if s&_TP_STATUS_TS_SOFTWARE > 0 {
 		fmt.Printf(" Software")
 	}

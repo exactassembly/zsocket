@@ -135,6 +135,7 @@ type IZSocket interface {
 // capture/transmit frame buffers
 type IZFrame interface {
 	RxSet()
+	GetTxBuf() []byte
 }
 
 // ZSocket opens a zero copy ring-buffer to the specified interface.
@@ -456,6 +457,33 @@ func (zs *ZSocket) getFreeTx() (*ringFrame, int32, error) {
 		runtime.Gosched()
 	}
 	return tx, txIndex, nil
+}
+
+// GetTxFrame allows a consumer of ZSockets to access a raw output frame segment
+// without having to use a copy function, each GetTxFrame() call must have a matching
+// call to ReturnTxFrame() or the ring buffer will be exhausted
+func (zs *ZSocket) GetTxFrame() (IZFrame, int32, error) {
+	tx, txIndex, err := zs.getFreeTx()
+	if err != nil {
+		return nil, -1, err
+	}
+	return tx, txIndex, nil
+}
+
+func (tx *ringFrame) GetTxBuf() []byte {
+	return tx.txStart
+}
+
+// ReturnTxFrame passes control of a Tx frame back to the kernel for sending
+// out over the wire, actual send won't occur until after a call to FlushFrames()
+func (zs *ZSocket) ReturnTxFrame(itx IZFrame, txIndex int32, cL uint16) {
+	tx := itx.(*ringFrame)
+	tx.setTpLen(cL)
+	tx.setTpSnapLen(cL)
+	written := atomic.AddInt32(&zs.txWritten, 1)
+	if written == 1 {
+		atomic.SwapInt32(&zs.txWrittenIndex, txIndex)
+	}
 }
 
 type txIndexError int32
